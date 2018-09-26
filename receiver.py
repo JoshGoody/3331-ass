@@ -116,7 +116,7 @@ while (connectionFinished == False):
         while (connected == True):
             print("waiting for packets")
             packet, address = receiver.receivePacket() 
-           
+            print(len(packet.data),packet.seqNum,packet.ackNum)
             if (packet.fin == False and packet.seqNum == expectedSeq):
                 receiver.appendData(packet.data)
                 dataProgress += len(packet.data)
@@ -126,6 +126,7 @@ while (connectionFinished == False):
                 expectedAck = seqNum + 1
                 print("sending ack")
                 ackPacket = Packet('', seqNum, ackNum, ack = True, syn = False, fin = False)
+                print(ackPacket.seqNum,ackPacket.ackNum)
                 receiver.sendPacket(ackPacket, address)
                    
 
