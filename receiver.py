@@ -1,15 +1,11 @@
 import pickle
-
 import sys
-
 import time
-
 from random import *
-
 from socket import *
-
-
-
+import select
+import threading 
+import queue
 
 
 class Packet:
@@ -50,7 +46,28 @@ class Receiver:
         self.socket.sendto(pickle.dumps(packet), address)
         
     
-    #def updateLog(self , , ,)
+    def log(self, event, time, pType, seqNum, bytes, ackNum):
+        space = 28
+        log = ""
+        
+        sList = [str(event), str(time), str(pType), str(seqNum), str(bytes), str(ackNum)]
+        i = 0
+        while (i < 6):
+            length = len(sList[i])
+            length = space - length
+            spacing = ""
+            j = 0
+            while (j < length):
+                spacing += " "
+                j +=1
+            
+            log += sList[i] + spacing
+            i += 1
+        
+        log += "\n"
+        f = open("Receiver_log.txt", "a+")
+        f.write(log)
+        f.close()
     
     
     
@@ -60,8 +77,11 @@ class Receiver:
 if (len(sys.argv) != 3):
     print("incorect usage, needs two arguments")
     exit(0)
-
-
+##reset the files 
+f = open("Receiver_log.txt", "w")
+f.close()
+#f = open("r_test.txt", "w")
+#f.close()
 
 seqNum = 0
 ackNum = 0
@@ -85,7 +105,7 @@ expectedAck = 0
 recPort, fileCopy = sys.argv[1:]
 receiver = Receiver(recPort, fileCopy)
 receiver.socket.bind(('', receiver.recPort))
-
+startTime = time.time()
 
 ###main event
 
@@ -95,9 +115,11 @@ while (connectionFinished == False):
         synPacket, address = receiver.receivePacket()
         
         if (synPacket.syn == True):
+            receiver.log("rcv", time.time()-startTime, "S", synPacket.seqNum, 0, synPacket.ackNum)
             ackNum = synPacket.seqNum + 1
             synAckPacket = Packet('', seqNum, ackNum, ack = True, syn = True, fin = False)
             receiver.sendPacket(synAckPacket, address)
+            receiver.log("snd", time.time()-startTime, "SA", seqNum, 0, ackNum)
             noConnection = False
             synSent = True
             expectedAck = seqNum + 1
@@ -107,6 +129,7 @@ while (connectionFinished == False):
         ackPacket, address = receiver.receivePacket()
         
         if (ackPacket.ack == True and expectedAck == ackPacket.ackNum):
+            receiver.log("rcv", time.time()-startTime, "A", ackPacket.seqNum, 0, ackPacket.ackNum)
             expectedSeq = ackPacket.seqNum
             synSent = False
             connected = True
@@ -118,6 +141,7 @@ while (connectionFinished == False):
             packet, address = receiver.receivePacket() 
             print(len(packet.data),packet.seqNum,packet.ackNum)
             if (packet.fin == False and packet.seqNum == expectedSeq):
+                receiver.log("rcv", time.time()-startTime, "D", packet.seqNum, len(packet.data), packet.ackNum)
                 receiver.appendData(packet.data)
                 dataProgress += len(packet.data)
                 seqNum = seqNum + 1
@@ -128,10 +152,12 @@ while (connectionFinished == False):
                 ackPacket = Packet('', seqNum, ackNum, ack = True, syn = False, fin = False)
                 print(ackPacket.seqNum,ackPacket.ackNum)
                 receiver.sendPacket(ackPacket, address)
+                receiver.log("snd", time.time()-startTime, "A", seqNum, 0, ackNum)
                    
 
             elif (packet.fin == True):
                 print("fin received")
+                receiver.log("rcv", time.time()-startTime, "F", packet.seqNum, 0, packet.ackNum)
                 #finish
                 connected = False
                 fin = True
@@ -140,6 +166,7 @@ while (connectionFinished == False):
                 ackPacket = Packet('', seqNum, ackNum, ack = True, syn = False, fin = False)
                 receiver.sendPacket(ackPacket, address)
                 print("ack sent")
+                receiver.log("snd", time.time()-startTime, "A", seqNum, 0, ackNum)
             else:
                 print("packet out of order")
                 #packet out of order and add to buffer
@@ -151,7 +178,7 @@ while (connectionFinished == False):
         finPacket = Packet('', seqNum, ackNum, ack = False, syn = False, fin = True)
         receiver.sendPacket(finPacket, address)
         print("fin sent")
-        
+        receiver.log("snd", time.time()-startTime, "F", seqNum, 0, ackNum)
         ##wait for ack for fin
         
         
@@ -160,6 +187,7 @@ while (connectionFinished == False):
             print("fin acknowledged")
             fin = False
             connectionFinished = True
+            receiver.log("rcv", time.time()-startTime, "A", packet.seqNum, 0, packet.ackNum)
             receiver.socket.close()
             print("connection closed, file received succesfully")
             
