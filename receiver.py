@@ -6,6 +6,7 @@ from socket import *
 import select
 import threading 
 import queue
+from collections import deque
 
 
 class Packet:
@@ -106,7 +107,7 @@ recPort, fileCopy = sys.argv[1:]
 receiver = Receiver(recPort, fileCopy)
 receiver.socket.bind(('', receiver.recPort))
 startTime = time.time()
-
+buff = deque()
 ###main event
 
 while (connectionFinished == False):
@@ -148,6 +149,20 @@ while (connectionFinished == False):
                 ackNum += len(packet.data)
                 expectedSeq = ackNum
                 expectedAck = seqNum + 1
+                packetLen = len(packet.data)
+                while (len(buff) > 0):
+                    packet1 = buff.popleft()
+                    if (packet1.seqNum == expectedSeq):
+                        receiver.appendData(packet1.data)
+                        dataProgress += len(packet1.data)
+                        seqNum = seqNum + 1
+                        ackNum += len(packet1.data)
+                        expectedSeq = ackNum
+                        expectedAck = seqNum + 1
+                    else:
+                        buff.appendleft(packet1)
+                        break    
+                        
                 print("sending ack")
                 ackPacket = Packet('', seqNum, ackNum, ack = True, syn = False, fin = False)
                 print(ackPacket.seqNum,ackPacket.ackNum)
@@ -169,6 +184,12 @@ while (connectionFinished == False):
                 receiver.log("snd", time.time()-startTime, "A", seqNum, 0, ackNum)
             else:
                 print("packet out of order")
+                print(packet.seqNum)
+                receiver.log("rcv", time.time()-startTime, "D", packet.seqNum, len(packet.data), packet.ackNum)
+                buff.append(packet)
+                ackPacket = Packet('', seqNum, expectedSeq, ack = True, syn = False, fin = False)
+                receiver.sendPacket(ackPacket, address)
+                receiver.log("snd", time.time()-startTime, "A", seqNum, 0, ackNum)
                 #packet out of order and add to buffer
     
     
