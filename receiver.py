@@ -91,6 +91,7 @@ seqNum = 0
 ackNum = 0
 #sendbase = 0
 #numUnAck = 0
+prevNum = 0
 
 # different states of operation
 noConnection = True
@@ -105,6 +106,7 @@ untranCount = 0
 dropCount = 0 
 expectedSeq = 0
 expectedAck = 0
+dupPackRec = 0
 
 recPort, fileCopy = sys.argv[1:]
 receiver = Receiver(recPort, fileCopy)
@@ -140,7 +142,7 @@ while (connectionFinished == False):
     if (connected == True):
         
         while (connected == True):
-            print("waiting for packets")
+            print("waiting for packet " + str(expectedSeq))
             packet, address = receiver.receivePacket() 
             print(len(packet.data),packet.seqNum,packet.ackNum)
             if (packet.fin == False and packet.seqNum == expectedSeq):
@@ -188,6 +190,17 @@ while (connectionFinished == False):
                 receiver.sendPacket(ackPacket, address)
                 print("ack sent")
                 receiver.log("snd", time.time()-startTime, "A", seqNum, 0, ackNum)
+            
+            elif (packet.seqNum < expectedSeq or packet.seqNum == prevNum):
+                print("dup received")
+                receiver.log("rcv/dup", time.time()-startTime, "D", packet.seqNum, len(packet.data), packet.ackNum)
+                dupPackRec += 1
+                ackPacket = Packet('', seqNum, expectedSeq, 0, ack = True, syn = False, fin = False, retran = True)
+                print("sending ack")
+                print(ackPacket.seqNum,ackPacket.ackNum)
+                receiver.sendPacket(ackPacket, address)
+                receiver.log("snd", time.time()-startTime, "A", seqNum, 0, ackNum)
+            
             else:
                 print("packet out of order")
                 print(packet.seqNum)
@@ -195,8 +208,9 @@ while (connectionFinished == False):
                 buff.append(packet)
                 ackPacket = Packet('', seqNum, expectedSeq, 0, ack = True, syn = False, fin = False, retran = False)
                 receiver.sendPacket(ackPacket, address)
-                receiver.log("snd", time.time()-startTime, "A", seqNum, 0, ackNum)
+                receiver.log("snd", time.time()-startTime, "A", seqNum, 0, expectedSeq)
                 #packet out of order and add to buffer
+            prevNum = packet.seqNum
     
     
     
