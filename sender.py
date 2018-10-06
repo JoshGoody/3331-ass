@@ -5,6 +5,7 @@ import threading
 import time
 import random
 import queue
+from collections import deque
 
 #from random import *
 
@@ -64,14 +65,17 @@ class PLD:
 
 class Packet:
 
-    def __init__(self, data, seqNum, ackNum, ack=False, syn=False, fin=False):
+    def __init__(self, data, seqNum, ackNum, checksum, ack=False, syn=False, fin=False, retran=False):
 
         self.data = data
         self.seqNum = seqNum
         self.ackNum = ackNum
+        self.checksum = checksum
         self.ack = ack
         self.syn = syn
         self.fin = fin
+        self.retran = retran
+        
 	
 		
 	
@@ -166,18 +170,19 @@ class Sender:
     
     def sendLogic(self, sender, pld):
         while (connected == True):
-            global dataSent, sendFile, waiting, transCount, segDrop, seqNum, ackNum, sendTime, windowSize, numUnAck
+            global dataSent, sendFile, waiting, transCount, segDrop, seqNum, ackNum, sendTime, windowSize, numUnAck, timerDeque, packetsInFlight
             if (numUnAck < windowSize):
                 ###create the packet to be sent
                 load = sender.splitDataToLoad(sendFile, dataSent)
                 dataSent += len(load)
                 ## maybe need to increment sequence number here?
-                packet = Packet(load, seqNum, ackNum, ack = False, syn = False, fin = False)
+                packet = Packet(load, seqNum, ackNum, 0, ack = False, syn = False, fin = False, retran = False)
                 #waiting = waiting + 1
                 ## this is where pld module will go ventually
+                packetsInFlight += 1
                 if (pld.drop() == True):
                     print("packet dropped first time")
-                    sender.log("drop", time.time()-startTime, "D", seqNum, dataSent, ackNum)
+                    sender.log("drop", time.time()-startTime, "D", seqNum, len(load), ackNum)
                     transCount += 1
                     segDrop += 1
                 else:
@@ -185,9 +190,11 @@ class Sender:
                     print("sent packets")
                     #print(len(packet.data), packet.seqNum)
                     sender.sendPacket(packet)
-                    sender.log("snd", time.time()-startTime, "D", seqNum, dataSent, ackNum)
+                    sender.log("snd", time.time()-startTime, "D", seqNum, len(load), ackNum)
                     transCount +=1
-                sendTime = time.clock()*1000 
+                sendTime = time.time()*1000 
+                timerDeque.append(sendTime)
+                #print("timer deque incremented")
                 
                 numUnAck += 1
                 seqNum += len(load)
@@ -216,36 +223,55 @@ class Sender:
     
     def receiveLogic(self, sender):
         while (connected == True):
-            global q, timeReTran, timeout, fileLength, sendFile, sendbase
-            try:
-                sender.socket.settimeout(timeout/1000)
-                #sender.socket.settimeout(2)
-                #print("i am stuck help me")
-                ackPacket = sender.receivePacket()
-                q.put(ackPacket)
-                print("no need to retransmit")
-                if (ackPacket.ackNum > fileLength):
-                    return
-                #ackNum = ackPacket.seqNum + 1
-                #sender.socket.settimeout(none)
-                #currTime = time.clock()*1000
-                #RTT = currTime - sendTime
-                #estimateRTT = 0.875*estimateRTT + 0.125*RTT
-                #devRTT = 0.75*devRTT + 0.25*abs(RTT - estimateRTT)
-                #timeout = estimateRTT + (int(gamma))*devRTT
-            #except socket.timeout:
-            except Exception as e:
-                #retransmit
-                print(e)
-                print("exception handled, retransmitting")
-                timeReTran += 1
-                newData1 = sender.splitDataToLoad(sendFile, sendbase-1)
-                packet2 = Packet(newData1, sendbase, 0, ack = False, syn = False, fin = False)
-                sender.sendPacket(packet2)
-                sender.log("snd/RXTT", time.time()-startTime, "D", sendbase, len(newData1), 0)
-                print("retransmission")
-                
-                continue
+            exceptTranTime = 0
+            global q, timeReTran, timeout, fileLength, sendFile, sendbase, timerDeque, transCount, segDrop, packetsInFlight
+            if (packetsInFlight > 0):
+                try:
+                    sender.socket.settimeout(timeout/1000)
+                    #sender.socket.settimeout(2)
+                    #print("i am stuck help me")
+                    ackPacket = sender.receivePacket()
+                    #packetsInFlight -= 1
+                    q.put(ackPacket)
+                    print("no need to retransmit")
+                    if (ackPacket.ackNum > fileLength):
+                        return
+                    packetsInFlight -= 1
+                    #ackNum = ackPacket.seqNum + 1
+                    #sender.socket.settimeout(none)
+                    #currTime = time.clock()*1000
+                    #RTT = currTime - sendTime
+                    #estimateRTT = 0.875*estimateRTT + 0.125*RTT
+                    #devRTT = 0.75*devRTT + 0.25*abs(RTT - estimateRTT)
+                    #timeout = estimateRTT + (int(gamma))*devRTT
+                #except socket.timeout:
+                except Exception as e:
+                    #retransmit
+                    #need to put through pld as well
+                    #print(e)
+                    print("exception handled, attempting to retransmit (pending pld)")
+                    timeReTran += 1
+                    transCount += 1
+                    #numUnAck += 1
+                    packetsInFlight += 1
+                    newData1 = sender.splitDataToLoad(sendFile, sendbase-1)
+                    if (pld.drop() == True):
+                        print("packet dropped in retransmission")
+                        sender.log("TRdrop", time.time()-startTime, "D", sendbase, len(newData1), ackNum)
+                        
+                        segDrop += 1
+                    else:
+                    
+                    
+                        
+                        packet2 = Packet(newData1, sendbase, 0, 0, ack = False, syn = False, fin = False, retran = True)
+                        sender.sendPacket(packet2)
+                        exceptTranTime = time.time()*1000
+                        timerDeque.append(exceptTranTime)
+                        sender.log("snd/RXTT", time.time()-startTime, "D", sendbase, len(newData1), 0)
+                        print("retransmission")
+                    
+                    continue
             #time.sleep(1)
 
 #### MAIN 
@@ -255,6 +281,8 @@ if (len(sys.argv) != 15):
     exit(0)
 
 f = open("Sender_log.txt", "w")
+f.close()
+f = open("test0_copy.pdf", "w")
 f.close()
 seqNum = 0
 ackNum = 0
@@ -280,6 +308,7 @@ transCount = 0
 untranCount = 0
 dropCount = 0
 fastLogCount = 0
+packetsInFlight = 0
 #waiting = 0
 rHostIp, recPort, sFile, MWS, MSS, gamma,pDrop, pDup, pCor, pOrd, maxOrd, pDel, maxDel, seed = sys.argv[1:]
 ###sener is initiated
@@ -297,8 +326,11 @@ timeout = estimateRTT + (int(gamma))*devRTT
 random.seed(int(seed))
 pld = PLD(pDrop, pDup, pCor, pOrd, maxOrd, pDel, maxDel, seed)
 receivable = [sender.socket]
+#time stuff
+timerDeque = deque()
 startTime = time.time()
 sendTime = 0
+tripTime = 0
 windowSize = int(sender.MWS/sender.MSS)
 #print(windowSize)
 if (windowSize == 0):
@@ -310,7 +342,7 @@ while (connectionFinished == False):
     ###send syn
     if (noConnection == True):
         print("sending syn")
-        synPacket = Packet('', seqNum, ackNum, ack = False, syn = True, fin = False)
+        synPacket = Packet('', seqNum, ackNum, 0, ack = False, syn = True, fin = False, retran = False)
         #print(synPacket.seqNum)
         sender.sendPacket(synPacket)
         transCount +=1
@@ -327,7 +359,7 @@ while (connectionFinished == False):
             ackNum = synAckPacket.seqNum + 1
             seqNum = seqNum + 1
             
-            ackPacket = Packet('', seqNum, ackNum, ack = True, syn = False, fin = False)
+            ackPacket = Packet('', seqNum, ackNum, 0, ack = True, syn = False, fin = False, retran = False)
             sender.sendPacket(ackPacket)
             transCount +=1
             synSent = False
@@ -416,57 +448,93 @@ while (connectionFinished == False):
             #print("exception handled, retransmitting")
             #timeReTran += 1
             #continue
-        if (q.qsize() > 0):
+        if (q.qsize() > 0 and len(timerDeque) > 0):
             ackPacket = q.get()
+            tripTime = timerDeque.popleft()
         else: 
             continue
         
         ackNum = ackPacket.seqNum + 1
-        #sender.socket.settimeout(none)
-        currTime = time.clock()*1000
-        RTT = currTime - sendTime
-        estimateRTT = 0.875*estimateRTT + 0.125*RTT
-        devRTT = 0.75*devRTT + 0.25*abs(RTT - estimateRTT)
-        timeout = estimateRTT + (int(gamma))*devRTT 
-        print(timeout)   
+        ##sender.socket.settimeout(none)
+        #currTime = time.clock()*1000
+        #RTT = currTime - sendTime
+        #estimateRTT = 0.875*estimateRTT + 0.125*RTT
+        #devRTT = 0.75*devRTT + 0.25*abs(RTT - estimateRTT)
+        #timeout = estimateRTT + (int(gamma))*devRTT 
+        #print(timeout)   
         #waiting = waiting - 1
         
         
         #nned to fix this as seqNum is changing to early
         #print(ackPacket.ackNum)
         #print(seqNum)
-        print(ackPacket.ackNum)
-        print(sendbase)
-        print(fastReTran)
+        #print(ackPacket.ackNum)
+        #print(sendbase)
+        #print(fastReTran)
+        #print("timer deque")
+        #print(len(timerDeque))
+        #if(len(timerDeque) != 0):
+        #tripTime = timerDeque.popleft()
         if (ackPacket.ack == True and ackPacket.ackNum > sendbase):
             print("correct acknowledgment received")
+            
+            #timer stuff
+            if (ackPacket.retran == False):
+                currTime = time.time()*1000
+                
+                RTT = currTime - tripTime
+                estimateRTT = 0.875*estimateRTT + 0.125*RTT
+                devRTT = 0.75*devRTT + 0.25*abs(RTT - estimateRTT)
+                timeout = estimateRTT + (int(gamma))*devRTT 
+                #print("checking time stuff")
+                #print(ackPacket.ackNum)
+                #print(tripTime)
+                #print(RTT)
+                #print(timeout)  
+            
             sender.log("rcv", time.time()-startTime, "A", ackPacket.seqNum, 0, ackPacket.ackNum)
             cumAcks = int((ackPacket.ackNum-sendbase)/sender.MSS)
-            print(cumAcks)
+            #print(cumAcks)
             numUnAck -= cumAcks
             sendbase = ackPacket.ackNum
             fastReTran = 0
             ##do what you need to do when an ack is received from the receiver
         
         elif (ackPacket.ackNum == sendbase):
+            
             fastReTran += 1
             sender.log("rcv", time.time()-startTime, "A", ackPacket.seqNum, 0, ackPacket.ackNum)
             if (fastReTran == 3):
+                transCount += 1
                 newData = sender.splitDataToLoad(sendFile, sendbase-1)
-                packet = Packet(newData, sendbase, 0, ack = False, syn = False, fin = False)
-                sender.sendPacket(packet)
-                sender.log("snd/RXTF", time.time()-startTime, "D", sendbase, len(newData), 0)
-                print("retransmission")
+                #numUnAck += 1
+                packetsInFlight += 1
+                if (pld.drop() == True):
+                    print("packet dropped in retransmission")
+                    sender.log("FRdrop", time.time()-startTime, "D", sendbase, len(newData), ackNum)
+                    segDrop += 1
+                else: 
+                #implement pld here as well
+                    
+                    packet = Packet(newData, sendbase, 0, 0, ack = False, syn = False, fin = False, retran = True)
+                    sender.sendPacket(packet)
+                    retrantime = time.time()*1000
+                    timerDeque.append(retrantime)
+                    sender.log("snd/RXTF", time.time()-startTime, "D", sendbase, len(newData), 0)
+                    print("retransmission")
                 fastReTran = 0
                 fastLogCount += 1
+                
+                
         
         if (ackPacket.ackNum > fileLength):
             print("everything received, file ready, fin sent")
             #sendThread.cancel()
             #receiveThread.cancel()
+            sender.socket.settimeout(None)
             finSent = True
             connected = False
-            finPacket = Packet('', seqNum, ackNum, ack = False, syn = False, fin = True)
+            finPacket = Packet('', seqNum, ackNum, 0, ack = False, syn = False, fin = True, retran = False)
             sender.sendPacket(finPacket)
             sender.log("snd", time.time()-startTime, "F", seqNum, 0, ackNum)
             transCount +=1
@@ -486,7 +554,7 @@ while (connectionFinished == False):
             if (finPacket.fin == True):
                 sender.log("rcv", time.time()-startTime, "F", finPacket.seqNum, 0, finPacket.ackNum)
                 finSent = False
-                ackPacket = Packet('', ackNum, seqNum, ack = True, syn = False, fin = False)
+                ackPacket = Packet('', ackNum, seqNum, 0, ack = True, syn = False, fin = False, retran = False)
                 sender.sendPacket(ackPacket)
                 sender.log("snd", time.time()-startTime, "A", seqNum, 0, ackNum)
                 transCount +=1
