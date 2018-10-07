@@ -100,8 +100,13 @@ connected = False
 fin = False
 connectionFinished = False
 
+#log trackers
+bitErrorCount = 0
 dataProgress = 0
-transCount = 0
+segCount = 0
+dSegCount = 0
+dupCount = 0
+dupACKCount = 0
 untranCount = 0
 dropCount = 0 
 expectedSeq = 0
@@ -118,6 +123,7 @@ while (connectionFinished == False):
     
     if (noConnection == True):
         synPacket, address = receiver.receivePacket()
+        segCount += 1
         startTime = time.time()
         if (synPacket.syn == True):
             receiver.log("rcv", time.time()-startTime, "S", synPacket.seqNum, 0, synPacket.ackNum)
@@ -132,7 +138,7 @@ while (connectionFinished == False):
     if (synSent == True):
         
         ackPacket, address = receiver.receivePacket()
-        
+        segCount += 1
         if (ackPacket.ack == True and expectedAck == ackPacket.ackNum):
             receiver.log("rcv", time.time()-startTime, "A", ackPacket.seqNum, 0, ackPacket.ackNum)
             expectedSeq = ackPacket.seqNum
@@ -144,8 +150,18 @@ while (connectionFinished == False):
         while (connected == True):
             print("waiting for packet " + str(expectedSeq))
             packet, address = receiver.receivePacket() 
+            segCount += 1
             print(len(packet.data),packet.seqNum,packet.ackNum)
-            if (packet.fin == False and packet.seqNum == expectedSeq):
+            checkSum = bytearray(packet.data, 'utf8')
+            #print(checkSum)
+            #print(packet.checksum)
+            
+            if (checkSum != packet.checksum and packet.fin == False):
+                print("packet corrupted, discrading")
+                receiver.log("rcv/Cor", time.time()-startTime, "D", packet.seqNum, len(packet.data), packet.ackNum)
+                bitErrorCount += 1
+            
+            elif (packet.fin == False and packet.seqNum == expectedSeq):
                 receiver.log("rcv", time.time()-startTime, "D", packet.seqNum, len(packet.data), packet.ackNum)
                 receiver.appendData(packet.data)
                 dataProgress += len(packet.data)
@@ -193,6 +209,8 @@ while (connectionFinished == False):
             
             elif (packet.seqNum < expectedSeq or packet.seqNum == prevNum):
                 print("dup received")
+                dupCount += 1
+                dupACKCount += 1
                 receiver.log("rcv/dup", time.time()-startTime, "D", packet.seqNum, len(packet.data), packet.ackNum)
                 dupPackRec += 1
                 ackPacket = Packet('', seqNum, expectedSeq, 0, ack = True, syn = False, fin = False, retran = True)
@@ -204,6 +222,7 @@ while (connectionFinished == False):
             else:
                 print("packet out of order")
                 print(packet.seqNum)
+                dupACKCount += 1
                 receiver.log("rcv", time.time()-startTime, "D", packet.seqNum, len(packet.data), packet.ackNum)
                 buff.append(packet)
                 ackPacket = Packet('', seqNum, expectedSeq, 0, ack = True, syn = False, fin = False, retran = False)
@@ -224,6 +243,8 @@ while (connectionFinished == False):
         
         
         packet, address = receiver.receivePacket()
+        segCount += 1
+        dSegCount = dSegCount + segCount - 4
         if packet.ack == True:
             print("fin acknowledged")
             fin = False
@@ -233,8 +254,22 @@ while (connectionFinished == False):
             print("connection closed, file received succesfully")
             
 
-
-
+f = open("Receiver_log.txt", "a+")
+f.write("\n")
+size = "Amount of data received (in Bytes)                     {}\n".format(dataProgress)
+f.write(size)
+segments = "Total segments received                                {}\n".format(segCount)
+f.write(segments)                
+dSegments = "Data segments received                                 {}\n".format(dSegCount)
+f.write(dSegments)            
+error = "Data segments with Bit Errors                          {}\n".format(bitErrorCount)
+f.write(error)        
+dupData = "Duplicate data segments received                       {}\n".format(dupCount)
+f.write(dupData)       
+dupACK = "Duplicate ACKs sent                                    {}\n".format(dupACKCount)
+f.write(dupACK)    
+        
+f.close()
     
     
     

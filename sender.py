@@ -92,7 +92,7 @@ class Sender:
         self.pDup = pDup
         self.pCor = pCor
         self.pOrd = pOrd
-        self.maxOrd = maxOrd
+        self.maxOrd = int(maxOrd)
         self.pDel = pDel
         self.maxDel = maxDel
         self.seed = int(seed)
@@ -170,20 +170,44 @@ class Sender:
     
     def sendLogic(self, sender, pld):
         while (connected == True):
-            global dataSent, sendFile, waiting, transCount, segDrop, seqNum, ackNum, sendTime, windowSize, numUnAck, timerDeque, packetsInFlight, dupCount
+            global dataSent, sendFile, waiting, transCount, segDrop, seqNum, ackNum, sendTime, windowSize, numUnAck, timerDeque, packetsInFlight, dupCount, corrupCount, savedPacket, reOrderFlag, countTilSend, reorderCount 
             if (numUnAck < windowSize):
+               #extra reorder pld stuff
+                if (reOrderFlag == True):
+                    
+                    if (countTilSend == pld.maxOrder):
+                        sender.sendPacket(savedPacket)
+                        sender.log("snd/rord", time.time()-startTime, "D", savedPacket.seqNum, len(savedPacket.data), savedPacket.ackNum)
+                        #transCount +=1
+                        #sendTime = time.time()*1000 
+                        #timerDeque.append(sendTime)
+                        savedPacket = None
+                        reOrderFlag = False
+                        countTilSend = 0
+                    
+                    countTilSend += 1
+                        
                 ###create the packet to be sent
                 load = sender.splitDataToLoad(sendFile, dataSent)
+                checkSum = bytearray(load, 'utf8')
+                #~checkSum[0]
+                #print(checkSum)
+                #for i in range(len(checkSum)): 
+                    #print(i)
+                    #~checkSum[i]
+                    
+                #print(checkSum)
                 dataSent += len(load)
                 ## maybe need to increment sequence number here?
-                packet = Packet(load, seqNum, ackNum, 0, ack = False, syn = False, fin = False, retran = False)
+                packet = Packet(load, seqNum, ackNum, checkSum, ack = False, syn = False, fin = False, retran = False)
                 #waiting = waiting + 1
                 ## this is where pld module will go ventually
                 packetsInFlight += 1
+                transCount += 1
                 if (pld.drop() == True):
                     print("packet dropped first time")
                     sender.log("drop", time.time()-startTime, "D", seqNum, len(load), ackNum)
-                    transCount += 1
+                    #transCount += 1
                     segDrop += 1
                 
                 elif (pld.duplicate() == True):
@@ -194,7 +218,7 @@ class Sender:
                     #print(len(packet.data), packet.seqNum)
                     sender.sendPacket(packet)
                     sender.log("snd", time.time()-startTime, "D", seqNum, len(load), ackNum)
-                    transCount +=1
+                    #transCount +=1
                     sendTime = time.time()*1000 
                     timerDeque.append(sendTime)
                     #dup
@@ -203,14 +227,34 @@ class Sender:
                     sender.log("snd/DUP", time.time()-startTime, "D", seqNum, len(load), ackNum)
                     sendTime = time.time()*1000 
                     timerDeque.append(sendTime)
-                    
+                
+                
+                elif(pld.corrupt() == True):
+                    print("packet corrupted")
+                    manipLoad = bytearray(load, 'utf8')
+                    manipLoad[0] ^= 1
+                    load = manipLoad.decode('utf8')
+                    corrupCount += 1
+                    packet = Packet(load, seqNum, ackNum, checkSum, ack = False, syn = False, fin = False, retran = False)
+                    sender.sendPacket(packet)
+                    sender.log("snd/Cor", time.time()-startTime, "D", seqNum, len(load), ackNum)
+                
+                
+                elif(pld.order() == True and reOrderFlag == False):
+                    reorderCount += 1
+                    reOrderFlag = True
+                    savedPacket = packet
+                    sender.log("rord", time.time()-startTime, "D", seqNum, len(load), ackNum)
+                    sendTime = time.time()*1000 
+                    timerDeque.append(sendTime)
+                
                 else:
                     #send packet
                     print("sent packets")
                     #print(len(packet.data), packet.seqNum)
                     sender.sendPacket(packet)
                     sender.log("snd", time.time()-startTime, "D", seqNum, len(load), ackNum)
-                    transCount +=1
+                    #transCount +=1
                     sendTime = time.time()*1000 
                     timerDeque.append(sendTime)
                 #sendTime = time.time()*1000 
@@ -245,7 +289,7 @@ class Sender:
     def receiveLogic(self, sender):
         while (connected == True):
             exceptTranTime = 0
-            global q, timeReTran, timeout, fileLength, sendFile, sendbase, timerDeque, transCount, segDrop, packetsInFlight, dupCount
+            global q, timeReTran, timeout, fileLength, sendFile, sendbase, timerDeque, transCount, segDrop, packetsInFlight, dupCount, corrupCount, savedPacket, reOrderFlag, countTilSend, reorderCount 
             if (packetsInFlight > 0):
                 try:
                     print(timeout)
@@ -276,8 +320,12 @@ class Sender:
                     timeReTran += 1
                     transCount += 1
                     #numUnAck += 1
+                    #might need to add or minus a packet in flight beause of pDrop stuff
                     packetsInFlight += 1
                     newData1 = sender.splitDataToLoad(sendFile, sendbase-1)
+                    checkSum = bytearray(newData1, 'utf8')
+                    #for i in range(len(checkSum)): 
+                        #~checkSum[i]
                     if (pld.drop() == True):
                         print("packet dropped in retransmission")
                         sender.log("TRdrop", time.time()-startTime, "D", sendbase, len(newData1), ackNum)
@@ -288,7 +336,7 @@ class Sender:
                         dupCount += 1
                         packetsInFlight += 1
                         #send packet
-                        packet2 = Packet(newData1, sendbase, 0, 0, ack = False, syn = False, fin = False, retran = True)
+                        packet2 = Packet(newData1, sendbase, 0, checkSum, ack = False, syn = False, fin = False, retran = True)
                         print("sent packets")
                         #print(len(packet.data), packet.seqNum)
                         sender.sendPacket(packet2)
@@ -302,11 +350,28 @@ class Sender:
                         sender.log("snd/DUP", time.time()-startTime, "D", sendbase, len(newData1), 0)
                         exceptTranTime = time.time()*1000 
                         timerDeque.append(exceptTranTime)
-                    else:
                     
-                    
+                    elif(pld.corrupt() == True):
+                        print("packet corrupted")
+                        manipLoad = bytearray(newData1, 'utf8')
+                        manipLoad[0] ^= 1
+                        load = manipLoad.decode('utf8')
                         
-                        packet2 = Packet(newData1, sendbase, 0, 0, ack = False, syn = False, fin = False, retran = True)
+                        corrupCount += 1
+                        packet2 = Packet(newData1, sendbase, 0, checkSum, ack = False, syn = False, fin = False, retran = False)
+                        sender.sendPacket(packet2)
+                        sender.log("snd/Cor", time.time()-startTime, "D", sendbase, len(newData1), 0)
+                        
+                    elif(pld.order() == True and reOrderFlag == False):
+                        reorderCount += 1
+                        reOrderFlag = True
+                        savedPacket = Packet(newData1, sendbase, 0, checkSum, ack = False, syn = False, fin = False, retran = True)
+                        sender.log("rord", time.time()-startTime, "D", sendbase, len(newData1), 0)
+                        exceptTranTime = time.time()*1000
+                        timerDeque.append(exceptTranTime)
+                    
+                    else:
+                        packet2 = Packet(newData1, sendbase, 0, checkSum, ack = False, syn = False, fin = False, retran = True)
                         sender.sendPacket(packet2)
                         exceptTranTime = time.time()*1000
                         timerDeque.append(exceptTranTime)
@@ -344,6 +409,11 @@ finSent = False
 connectionFinished = False
 ready = False
 
+#reordering stuff
+savedPacket = None
+reOrderFlag = False
+countTilSend = 0
+
 q = queue.Queue(maxsize=0)
 sendQ = queue.Queue(maxsize=0)
 untranCount = 0
@@ -365,6 +435,8 @@ timeReTran = 0
 fastLogCount = 0
 dupCount = 0
 dupAckno = 0
+corrupCount = 0
+reorderCount = 0
 
 ##timing function
 estimateRTT = 500
@@ -416,6 +488,9 @@ while (connectionFinished == False):
             print("sent ack, starting file transfer")
             sendThread = threading.Thread(target=sender.sendLogic, args=[sender,pld])
             receiveThread = threading.Thread(target=sender.receiveLogic, args=[sender])
+            print(sender.pDrop)
+            print(sender.pDup)
+            print(sender.pCor)
             sendThread.start()
             receiveThread.start()
         else:
@@ -496,9 +571,15 @@ while (connectionFinished == False):
             #print("exception handled, retransmitting")
             #timeReTran += 1
             #continue
+        #print(" q size " + str(q.qsize()))
+        #print("timer deque soze " + str(len(timerDeque)))
+        #print(packetsInFlight)
         if (q.qsize() > 0 and len(timerDeque) > 0):
             ackPacket = q.get()
             tripTime = timerDeque.popleft()
+        elif (q.qsize() > 0 and len(timerDeque) == 0 and dataSent >= fileLength):
+            ackPacket = q.get()
+            print("finishing sequence should always initiate after this")
         else: 
             continue
         
@@ -513,94 +594,9 @@ while (connectionFinished == False):
         #waiting = waiting - 1
         
         
-        #nned to fix this as seqNum is changing to early
-        #print(ackPacket.ackNum)
-        #print(seqNum)
-        #print(ackPacket.ackNum)
-        #print(sendbase)
-        #print(fastReTran)
-        #print("timer deque")
-        #print(len(timerDeque))
-        #if(len(timerDeque) != 0):
-        #tripTime = timerDeque.popleft()
-        if (ackPacket.ack == True and ackPacket.ackNum > sendbase):
-            print("correct acknowledgment received")
-            
-            #timer stuff
-            if (ackPacket.retran == False):
-                currTime = time.time()*1000
-                
-                RTT = currTime - tripTime
-                estimateRTT = 0.875*estimateRTT + 0.125*RTT
-                devRTT = 0.75*devRTT + 0.25*abs(RTT - estimateRTT)
-                timeout = estimateRTT + (int(gamma))*devRTT 
-                #print("checking time stuff")
-                #print(ackPacket.ackNum)
-                #print(tripTime)
-                #print(RTT)
-                #print(timeout)  
-            
-            sender.log("rcv", time.time()-startTime, "A", ackPacket.seqNum, 0, ackPacket.ackNum)
-            cumAcks = int((ackPacket.ackNum-sendbase)/sender.MSS)
-            #print(cumAcks)
-            numUnAck -= cumAcks
-            sendbase = ackPacket.ackNum
-            fastReTran = 0
-            ##do what you need to do when an ack is received from the receiver
-        
-        elif (ackPacket.ackNum == sendbase):
-            dupAckno += 1
-            fastReTran += 1
-            sender.log("rcv", time.time()-startTime, "A", ackPacket.seqNum, 0, ackPacket.ackNum)
-            if (fastReTran == 3):
-                #maybe get rid and go back to other time method
-                #reTranPoper = timerDeque.popleft()
-                transCount += 1
-                newData = sender.splitDataToLoad(sendFile, sendbase-1)
-                #numUnAck += 1
-                packetsInFlight += 1
-                print("retransmitting pending fast retran pld")
-                if (pld.drop() == True):
-                    print("packet dropped in retransmission")
-                    sender.log("FRdrop", time.time()-startTime, "D", sendbase, len(newData), ackNum)
-                    segDrop += 1
-                
-                elif (pld.duplicate() == True):
-                    dupCount += 1
-                    packetsInFlight += 1
-                    #send packet
-                    packet2 = Packet(newData, sendbase, 0, 0, ack = False, syn = False, fin = False, retran = True)
-                    print("sent packets")
-                    #print(len(packet.data), packet.seqNum)
-                    sender.sendPacket(packet2)
-                    sender.log("snd/RXTF", time.time()-startTime, "D", sendbase, len(newData), 0)
-                    retrantime = time.time()*1000 
-                    timerDeque.append(retrantime)
-                    #transCount +=1
-                    #dup
-                    print("packet dupped")
-                    sender.sendPacket(packet2)
-                    sender.log("snd/DUP", time.time()-startTime, "D", sendbase, len(newData), 0)
-                    retrantime = time.time()*1000 
-                    timerDeque.append(retrantime)
-                
-                else: 
-                #implement pld here as well
-                    
-                    packet = Packet(newData, sendbase, 0, 0, ack = False, syn = False, fin = False, retran = True)
-                    sender.sendPacket(packet)
-                    retrantime = time.time()*1000
-                    timerDeque.append(retrantime)
-                    sender.log("snd/RXTF", time.time()-startTime, "D", sendbase, len(newData), 0)
-                    print("retransmission")
-                #retrantime = time.time()*1000
-                #timerDeque.append(retrantime)
-                fastReTran = 0
-                fastLogCount += 1
-                
-                
-        
         if (ackPacket.ackNum > fileLength):
+            print("correct acknowledgment received")
+            sender.log("rcv", time.time()-startTime, "A", ackPacket.seqNum, 0, ackPacket.ackNum)           
             print("everything received, file ready, fin sent")
             #sendThread.cancel()
             #receiveThread.cancel()
@@ -611,6 +607,119 @@ while (connectionFinished == False):
             sender.sendPacket(finPacket)
             sender.log("snd", time.time()-startTime, "F", seqNum, 0, ackNum)
             transCount +=1
+        
+        #nned to fix this as seqNum is changing to early
+        #print(ackPacket.ackNum)
+        #print(seqNum)
+        #print(ackPacket.ackNum)
+        #print(sendbase)
+        #print(fastReTran)
+        #print("timer deque")
+        #print(len(timerDeque))
+        #if(len(timerDeque) != 0):
+        #tripTime = timerDeque.popleft()
+        else :
+            if (ackPacket.ack == True and ackPacket.ackNum > sendbase):
+                print("correct acknowledgment received")
+                
+                #timer stuff
+                if (ackPacket.retran == False):
+                    currTime = time.time()*1000
+                    
+                    RTT = currTime - tripTime
+                    estimateRTT = 0.875*estimateRTT + 0.125*RTT
+                    devRTT = 0.75*devRTT + 0.25*abs(RTT - estimateRTT)
+                    timeout = estimateRTT + (int(gamma))*devRTT 
+                    #print("checking time stuff")
+                    #print(ackPacket.ackNum)
+                    #print(tripTime)
+                    #print(RTT)
+                    #print(timeout)  
+                
+                sender.log("rcv", time.time()-startTime, "A", ackPacket.seqNum, 0, ackPacket.ackNum)
+                cumAcks = int((ackPacket.ackNum-sendbase)/sender.MSS)
+                #print(cumAcks)
+                numUnAck -= cumAcks
+                sendbase = ackPacket.ackNum
+                fastReTran = 0
+                ##do what you need to do when an ack is received from the receiver
+            
+            elif (ackPacket.ackNum == sendbase):
+                dupAckno += 1
+                fastReTran += 1
+                sender.log("rcv", time.time()-startTime, "A", ackPacket.seqNum, 0, ackPacket.ackNum)
+                if (fastReTran == 3):
+                    #maybe get rid and go back to other time method
+                    #reTranPoper = timerDeque.popleft()
+                    transCount += 1
+                    newData = sender.splitDataToLoad(sendFile, sendbase-1)
+                    checkSum = bytearray(newData, 'utf8')
+                    
+                    #for i in range(len(checkSum)): 
+                            #~checkSum[i]
+                    #numUnAck += 1
+                    packetsInFlight += 1
+                    print("retransmitting pending fast retran pld")
+                    if (pld.drop() == True):
+                        print("packet dropped in retransmission")
+                        sender.log("FRdrop", time.time()-startTime, "D", sendbase, len(newData), ackNum)
+                        segDrop += 1
+                    
+                    elif (pld.duplicate() == True):
+                        dupCount += 1
+                        packetsInFlight += 1
+                        #send packet
+                        packet2 = Packet(newData, sendbase, 0, checkSum, ack = False, syn = False, fin = False, retran = True)
+                        print("sent packets")
+                        #print(len(packet.data), packet.seqNum)
+                        sender.sendPacket(packet2)
+                        sender.log("snd/RXTF", time.time()-startTime, "D", sendbase, len(newData), 0)
+                        retrantime = time.time()*1000 
+                        timerDeque.append(retrantime)
+                        #transCount +=1
+                        #dup
+                        print("packet dupped")
+                        sender.sendPacket(packet2)
+                        sender.log("snd/DUP", time.time()-startTime, "D", sendbase, len(newData), 0)
+                        retrantime = time.time()*1000 
+                        timerDeque.append(retrantime)
+                    
+                    elif(pld.corrupt() == True):
+                        print("packet corrupted")
+                        manipLoad = bytearray(newData, 'utf8')
+                        manipLoad[0] ^= 1
+                        load = manipLoad.decode('utf8')
+                            
+                        corrupCount += 1
+                        packet2 = Packet(newData, sendbase, 0, checkSum, ack = False, syn = False, fin = False, retran = True)
+                        sender.sendPacket(packet2)
+                        sender.log("snd/R/Cor", time.time()-startTime, "D", sendbase, len(newData), 0)
+                    
+                    elif(pld.order() == True and reOrderFlag == False):
+                        reorderCount += 1
+                        reOrderFlag = True
+                        savedPacket = Packet(newData, sendbase, 0, checkSum, ack = False, syn = False, fin = False, retran = True)
+                        sender.log("rord", time.time()-startTime, "D", sendbase, len(newData), 0)
+                        retrantime = time.time()*1000
+                        timerDeque.append(retrantime)
+                    
+                    else: 
+                    #implement pld here as well
+                        
+                        packet = Packet(newData, sendbase, 0, checkSum, ack = False, syn = False, fin = False, retran = True)
+                        sender.sendPacket(packet)
+                        retrantime = time.time()*1000
+                        timerDeque.append(retrantime)
+                        sender.log("snd/RXTF", time.time()-startTime, "D", sendbase, len(newData), 0)
+                        print("retransmission")
+                    #retrantime = time.time()*1000
+                    #timerDeque.append(retrantime)
+                    fastReTran = 0
+                    fastLogCount += 1
+                
+                
+        
+       
         
         
             
@@ -634,6 +743,7 @@ while (connectionFinished == False):
                 pldCount = transCount - 4
                 print("connection terminated and fin completed")
                 print(len(timerDeque))
+                print(q.qsize())
                 connectionFinished = True
     
 sender.socket.close()
@@ -648,9 +758,9 @@ pld = "Number of Segments handled by PLD                       {}\n".format(pldC
 f.write(pld)            
 dropped = "Number of Segments dropped                               {}\n".format(segDrop)
 f.write(dropped)        
-corrupted = "Number of Segments Corrupted                             {}\n".format(0)
+corrupted = "Number of Segments Corrupted                             {}\n".format(corrupCount)
 f.write(corrupted)       
-order = "Number of Segments Re-ordered                            {}\n".format(0)
+order = "Number of Segments Re-ordered                            {}\n".format(reorderCount)
 f.write(order)    
 dup = "Number of Segments Duplicated                            {}\n".format(dupCount)
 f.write(dup)        
@@ -663,6 +773,6 @@ f.write(fast)
 dupAck = "Number of DUP ACKS received                              {}\n".format(dupAckno)
 f.write(dupAck)		
 		
-		
+f.close()		
 		
 		
