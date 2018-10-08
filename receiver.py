@@ -99,6 +99,7 @@ synSent = False
 connected = False
 fin = False
 connectionFinished = False
+notFound = True
 
 #log trackers
 bitErrorCount = 0
@@ -152,6 +153,7 @@ while (connectionFinished == False):
             packet, address = receiver.receivePacket() 
             segCount += 1
             print(len(packet.data),packet.seqNum,packet.ackNum)
+            #print(packet.data)
             checkSum = bytearray(packet.data, 'utf8')
             #print(checkSum)
             #print(packet.checksum)
@@ -172,16 +174,48 @@ while (connectionFinished == False):
                 packetLen = len(packet.data)
                 while (len(buff) > 0):
                     packet1 = buff.popleft()
+                    #print("I am defs not a good sir")
+                    #print(packet1.seqNum)
                     if (packet1.seqNum == expectedSeq):
                         receiver.appendData(packet1.data)
                         dataProgress += len(packet1.data)
+                        ### if the packet has already been added discard the packet
                         seqNum = seqNum + 1
                         ackNum += len(packet1.data)
                         expectedSeq = ackNum
                         expectedAck = seqNum + 1
                     else:
-                        buff.appendleft(packet1)
-                        break    
+                        i = 0
+                        buff.append(packet1)
+                        while (i < len(buff)-1):
+                            #buff.append(packet1)
+                            checkPacket = buff.popleft()
+                            #print("I am here good sir")
+                            #print(checkPacket.seqNum)
+                            if (checkPacket.seqNum == expectedSeq):
+                                notFound = False 
+                                receiver.appendData(checkPacket.data)
+                                dataProgress += len(checkPacket.data)
+                                ### if the packet has already been added discard the packet
+                                seqNum = seqNum + 1
+                                ackNum += len(checkPacket.data)
+                                expectedSeq = ackNum
+                                expectedAck = seqNum + 1
+                                j = 0
+                                while (j < len(buff)-i-1):
+                                    packet12 = buff.popleft()
+                                    buff.append(packet12)
+                                    j += 1
+                                break
+                            else:
+                                buff.append(checkPacket)
+                                i += 1
+                        #buff.appendleft(packet1)
+                        if (notFound == True):
+                            break
+                        else:
+                            notFound = True
+                            continue    
                         
                 print("sending ack")
                 if (packet.retran == True):

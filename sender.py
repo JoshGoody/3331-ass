@@ -189,6 +189,9 @@ class Sender:
                         
                 ###create the packet to be sent
                 load = sender.splitDataToLoad(sendFile, dataSent)
+                #if needed undo this shit
+                #print(seqNum)
+                #print(load)
                 checkSum = bytearray(load, 'utf8')
                 #~checkSum[0]
                 #print(checkSum)
@@ -201,7 +204,7 @@ class Sender:
                 ## maybe need to increment sequence number here?
                 packet = Packet(load, seqNum, ackNum, checkSum, ack = False, syn = False, fin = False, retran = False)
                 #waiting = waiting + 1
-                ## this is where pld module will go ventually
+                ## pld module implementation
                 packetsInFlight += 1
                 transCount += 1
                 if (pld.drop() == True):
@@ -244,6 +247,7 @@ class Sender:
                     reorderCount += 1
                     reOrderFlag = True
                     savedPacket = packet
+                    countTilSend = 0
                     sender.log("rord", time.time()-startTime, "D", seqNum, len(load), ackNum)
                     sendTime = time.time()*1000 
                     timerDeque.append(sendTime)
@@ -290,6 +294,7 @@ class Sender:
         while (connected == True):
             exceptTranTime = 0
             global q, timeReTran, timeout, fileLength, sendFile, sendbase, timerDeque, transCount, segDrop, packetsInFlight, dupCount, corrupCount, savedPacket, reOrderFlag, countTilSend, reorderCount 
+            #fix so finsh with zero
             if (packetsInFlight > 0):
                 try:
                     print(timeout)
@@ -453,6 +458,9 @@ sendTime = 0
 tripTime = 0
 windowSize = int(sender.MWS/sender.MSS)
 #print(windowSize)
+###################################################################### to fix Change MSS to MWS if MWS < MSS 
+if (sender.MWS < sender.MSS):
+    sender.MSS = sender.MWS
 if (windowSize == 0):
     windowSize = 1
 #print(windowSize)
@@ -652,7 +660,7 @@ while (connectionFinished == False):
                     #maybe get rid and go back to other time method
                     #reTranPoper = timerDeque.popleft()
                     transCount += 1
-                    newData = sender.splitDataToLoad(sendFile, sendbase-1)
+                    newData = sender.splitDataToLoad(sendFile, sendbase-1)   ####(should be sendbase -1)
                     checkSum = bytearray(newData, 'utf8')
                     
                     #for i in range(len(checkSum)): 
@@ -725,7 +733,7 @@ while (connectionFinished == False):
             
         
     if (finSent == True):
-        sender.socket.settimeout(3)
+        #sender.socket.settimeout(3)
         ackPacket1 = sender.receivePacket()
         if (ackPacket1.ack == True and ackPacket1.fin == False):
             print("fin acknowledgment received")
