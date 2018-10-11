@@ -44,9 +44,7 @@ class Receiver:
         with open(fileCopy, "a+b") as f:
             f.write(data)
             f.close()
-        #f = open(fileCopy, "a+")
-        #f.write(data)
-        #f.close()
+
 
     
     def sendPacket(self, packet, address):
@@ -94,13 +92,10 @@ if (len(sys.argv) != 3):
 ##reset the files 
 f = open("Receiver_log.txt", "w")
 f.close()
-#f = open("r_test.txt", "w")
-#f.close()
+
 
 seqNum = 0
 ackNum = 0
-#sendbase = 0
-#numUnAck = 0
 prevNum = 0
 
 # different states of operation
@@ -136,11 +131,11 @@ while (connectionFinished == False):
     
     if (noConnection == True):
         synPacket, address = receiver.receivePacket()
+        startTime = time.time()
         addressInUse = address
         segCount += 1
-        startTime = time.time()
         if (synPacket.syn == True):
-            receiver.log("rcv", time.time()-startTime, "S", synPacket.seqNum, 0, synPacket.ackNum)
+            receiver.log("rcv", 0, "S", synPacket.seqNum, 0, synPacket.ackNum)
             ackNum = synPacket.seqNum + 1
             synAckPacket = Packet('', seqNum, ackNum, 0, ack = True, syn = True, fin = False, retran = False)
             receiver.sendPacket(synAckPacket, address)
@@ -164,22 +159,16 @@ while (connectionFinished == False):
     if (connected == True):
         
         while (connected == True):
-            #print(len(buff))
-            #print("waiting for packet " + str(expectedSeq))
-            #packet, address = receiver.receivePacket() 
-            #segCount += 1
+
             if (len(packetDeque) != 0):
                 packet = packetDeque.popleft()
             else:
                 continue
             
-            #print(len(buff))
+
             print("waiting for packet " + str(expectedSeq))
             print(len(packet.data),packet.seqNum,packet.ackNum)
-            #print(packet.data)
             checkSum = packet.data
-            #print(checkSum)
-            #print(packet.checksum)
             
             if (checkSum != packet.checksum and packet.fin == False):
                 print("packet corrupted, discrading")
@@ -197,8 +186,6 @@ while (connectionFinished == False):
                 packetLen = len(packet.data)
                 while (len(buff) > 0):
                     packet1 = buff.popleft()
-                    #print("I am defs not a good sir")
-                    #print(packet1.seqNum)
                     if (packet1.seqNum == expectedSeq):
                         receiver.appendData(packet1.data)
                         dataProgress += len(packet1.data)
@@ -211,10 +198,7 @@ while (connectionFinished == False):
                         i = 0
                         buff.append(packet1)
                         while (i < len(buff)-1):
-                            #buff.append(packet1)
                             checkPacket = buff.popleft()
-                            #print("I am here good sir")
-                            #print(checkPacket.seqNum)
                             if (checkPacket.seqNum == expectedSeq):
                                 notFound = False 
                                 receiver.appendData(checkPacket.data)
@@ -233,7 +217,7 @@ while (connectionFinished == False):
                             else:
                                 buff.append(checkPacket)
                                 i += 1
-                        #buff.appendleft(packet1)
+                        
                         if (notFound == True):
                             break
                         else:
@@ -274,7 +258,7 @@ while (connectionFinished == False):
                 print("sending ack")
                 print(ackPacket.seqNum,ackPacket.ackNum)
                 receiver.sendPacket(ackPacket, addressInUse)
-                receiver.log("snd", time.time()-startTime, "A", seqNum, 0, ackNum)
+                receiver.log("snd/DA", time.time()-startTime, "A", seqNum, 0, ackNum)
             
             else:
                 print("packet out of order")
@@ -284,13 +268,14 @@ while (connectionFinished == False):
                 buff.append(packet)
                 ackPacket = Packet('', seqNum, expectedSeq, 0, ack = True, syn = False, fin = False, retran = False)
                 receiver.sendPacket(ackPacket, addressInUse)
-                receiver.log("snd", time.time()-startTime, "A", seqNum, 0, expectedSeq)
+                receiver.log("snd/DA", time.time()-startTime, "A", seqNum, 0, expectedSeq)
                 #packet out of order and add to buffer
             prevNum = packet.seqNum
     
     
     
     if (fin == True):
+        time.sleep(0.2)
         ###more finishing logic
         finPacket = Packet('', seqNum, ackNum, 0, ack = False, syn = False, fin = True, retran = False)
         receiver.sendPacket(finPacket, addressInUse)
@@ -298,8 +283,21 @@ while (connectionFinished == False):
         receiver.log("snd", time.time()-startTime, "F", seqNum, 0, ackNum)
         ##wait for ack for fin
         
-        
-        packet, address = receiver.receivePacket()
+        ######this should never happen but just in case
+        try:
+            receiver.socket.settimeout(3)
+            packet, address = receiver.receivePacket()
+        except Exception as e:
+            print("shouldnt happen")
+            segCount += 1
+            dSegCount = dSegCount + segCount - 4
+            fin = False
+            connectionFinished = True
+            receiver.log("rcv", time.time()-startTime, "A", packet.seqNum, 0, packet.ackNum)
+            receiver.socket.close()
+            print("connection closed, file received succesfully")
+            break
+            
         segCount += 1
         dSegCount = dSegCount + segCount - 4
         if packet.ack == True:
