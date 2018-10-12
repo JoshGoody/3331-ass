@@ -175,7 +175,7 @@ class Sender:
         while (connected == True):
 
             
-            if (countTilSend == pld.maxOrder):
+            if (countTilSend >= pld.maxOrder):
                 print("sending re-ordered packet")
                 sender.sendPacket(savedPacket)
                 sender.log("snd/rord", time.time()-startTime, "D", savedPacket.seqNum, len(savedPacket.data), savedPacket.ackNum)
