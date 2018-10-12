@@ -657,7 +657,7 @@ while (connectionFinished == False):
         try:
             ackPacket3 = sender.receivePacket()
         except Exception as e:
-        #############################################shouldnt happen
+        #############################################shouldnt happen, just in case any error happens this finishes the program
             print("shouldnt happen")
             sender.log("rcv", time.time()-startTime, "F", finPacket.seqNum, 0, finPacket.ackNum)
             finSent = False
